@@ -2,23 +2,31 @@ import { NextRequest, NextResponse } from 'next/server'
 import Stripe from 'stripe'
 import { createClient } from '@supabase/supabase-js'
 
+// Stripe est safe au top-level (ne valide pas l'URL)
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
   apiVersion: '2024-04-10',
 })
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-  process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-)
+// Supabase est créé LAZILY dans la fonction pour éviter l'erreur
+// "Invalid supabaseUrl" au build quand les env vars sont absentes
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) throw new Error('Variables Supabase manquantes')
+  return createClient(url, key)
+}
 
-const PRICE_TO_PLAN: Record<string, string> = {
-  [process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_MONTHLY   || 'none1']: 'pro',
-  [process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_YEARLY    || 'none2']: 'pro',
-  [process.env.NEXT_PUBLIC_STRIPE_PRICE_AGENCY_MONTHLY|| 'none3']: 'agency',
-  [process.env.NEXT_PUBLIC_STRIPE_PRICE_EARLYBIRD     || 'none4']: 'earlybird',
+function getPriceToPlan(): Record<string, string> {
+  return {
+    [process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_MONTHLY    || 'none1']: 'pro',
+    [process.env.NEXT_PUBLIC_STRIPE_PRICE_PRO_YEARLY     || 'none2']: 'pro',
+    [process.env.NEXT_PUBLIC_STRIPE_PRICE_AGENCY_MONTHLY || 'none3']: 'agency',
+    [process.env.NEXT_PUBLIC_STRIPE_PRICE_EARLYBIRD      || 'none4']: 'earlybird',
+  }
 }
 
 async function updateUserPlan(customerId: string, plan: string, subscriptionId?: string, subscriptionEnd?: number) {
+  const supabase = getSupabase()
   const { data: profile } = await supabase
     .from('user_profiles')
     .select('user_id')
@@ -49,6 +57,8 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: 'Signature invalide' }, { status: 400 })
   }
+
+  const PRICE_TO_PLAN = getPriceToPlan()
 
   try {
     if (event.type === 'checkout.session.completed') {

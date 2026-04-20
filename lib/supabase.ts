@@ -1,24 +1,29 @@
 import { createBrowserClient } from '@supabase/ssr'
 import { createClient } from '@supabase/supabase-js'
 
-const SUPABASE_URL  = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+// ⚠️  Ne PAS lire les env vars au top-level avec `!`
+// (Next.js évalue les modules au build — si les vars sont absentes → crash)
+// On les lit à la demande, dans chaque fonction.
 
 // Client navigateur (singleton)
 let _browserClient: ReturnType<typeof createBrowserClient> | null = null
 
 export function getSupabaseBrowser() {
+  const url  = process.env.NEXT_PUBLIC_SUPABASE_URL  || ''
+  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
   if (!_browserClient) {
-    _browserClient = createBrowserClient(SUPABASE_URL, SUPABASE_ANON)
+    _browserClient = createBrowserClient(url, anon)
   }
   return _browserClient
 }
 
 // Client admin (API routes uniquement)
 export function getSupabaseAdmin() {
+  const url        = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url)        throw new Error('NEXT_PUBLIC_SUPABASE_URL manquante')
   if (!serviceKey) throw new Error('SUPABASE_SERVICE_ROLE_KEY manquante')
-  return createClient(SUPABASE_URL, serviceKey, {
+  return createClient(url, serviceKey, {
     auth: { autoRefreshToken: false, persistSession: false }
   })
 }

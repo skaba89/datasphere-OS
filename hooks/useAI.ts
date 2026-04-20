@@ -1,66 +1,99 @@
-'use client'
 import { useState, useCallback } from 'react'
 
-interface UseAIOptions {
-  provider?: 'groq' | 'openrouter' | 'anthropic'
-  model?:    string
-  onSuccess?: (result: string) => void
-  onError?:   (error: string) => void
+interface AIConfig { provider: string; groqKey: string; openrouterKey: string; anthropicKey: string }
+
+function getConfig(): AIConfig {
+  try {
+    const v = localStorage.getItem('datasphere_ai_config')
+    return v ? JSON.parse(v) : { provider: 'groq', groqKey: '', openrouterKey: '', anthropicKey: '' }
+  } catch { return { provider: 'groq', groqKey: '', openrouterKey: '', anthropicKey: '' } }
 }
 
-export function useAI(options: UseAIOptions = {}) {
+export function useAI() {
   const [loading, setLoading] = useState(false)
   const [error,   setError]   = useState<string | null>(null)
-  const [result,  setResult]  = useState<string | null>(null)
 
-  const generate = useCallback(async (prompt: string, maxTokens = 1000): Promise<string | null> => {
+  const generate = useCallback(async (prompt: string, maxTokens = 500): Promise<string> => {
     setLoading(true); setError(null)
 
     try {
-      // Essayer le proxy serveur d'abord
-      let token = ''
-      try {
-        const { createClient } = await import('@supabase/supabase-js')
-        const sb = createClient(
-          process.env.NEXT_PUBLIC_SUPABASE_URL!,
-          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-        )
-        const { data } = await sb.auth.getSession()
-        token = data.session?.access_token || ''
-      } catch {}
+      // Essayer d'abord via le proxy serveur (Netlify function)
+      const token = ''
+      const serverRes = await fetch('/api/ai-proxy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ prompt, maxTokens }),
+      })
+      if (serverRes.ok) {
+        const data = await serverRes.json()
+        return data.text || ''
+      }
+    } catch { /* fallback client */ }
 
-      if (token) {
-        const res = await fetch('/api/ai-proxy', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-          body: JSON.stringify({ prompt, maxTokens, provider: options.provider || 'groq', model: options.model }),
-        })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || `Erreur ${res.status}`)
-        setResult(data.result); options.onSuccess?.(data.result); return data.result
+    // Fallback : appel direct depuis le navigateur avec la clé locale
+    try {
+      const cfg = getConfig()
+      const key = cfg.provider === 'groq' ? cfg.groqKey
+                : cfg.provider === 'openrouter' ? cfg.openrouterKey
+                : cfg.anthropicKey
+
+      if (!key) {
+        setError('Aucune clé IA configurée. Rendez-vous dans les Paramètres.')
+        return ''
       }
 
-      // Fallback clé localStorage
-      const aiConfig = JSON.parse(localStorage.getItem('dsos_ai_config') || '{}')
-      if (aiConfig.groqKey) {
-        const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${aiConfig.groqKey}` },
-          body: JSON.stringify({ model: options.model || 'llama-3.3-70b-versatile', max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }),
-        })
-        const data = await res.json()
-        const text = data.choices?.[0]?.message?.content || ''
-        setResult(text); options.onSuccess?.(text); return text
+      const url = cfg.provider === 'groq'        ? 'https://api.groq.com/openai/v1/chat/completions'
+                : cfg.provider === 'openrouter'  ? 'https://openrouter.ai/api/v1/chat/completions'
+                : 'https://api.anthropic.com/v1/messages'
+
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+      if (cfg.provider === 'anthropic') {
+        headers['x-api-key'] = key
+        headers['anthropic-version'] = '2023-06-01'
+      } else {
+        headers['Authorization'] = `Bearer ${key}`
+        if (cfg.provider === 'openrouter') {
+          headers['HTTP-Referer'] = 'https://datasphere-os.netlify.app'
+          headers['X-Title'] = 'DataSphere OS'
+        }
       }
 
-      throw new Error('Aucune clé API configurée')
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Erreur'
-      setError(msg); options.onError?.(msg); return null
+      const model = cfg.provider === 'groq'       ? 'llama-3.3-70b-versatile'
+                  : cfg.provider === 'openrouter' ? 'meta-llama/llama-3.3-70b-instruct:free'
+                  : 'claude-haiku-4-5-20251001'
+
+      const body = cfg.provider === 'anthropic'
+        ? { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }
+        : { model, max_tokens: maxTokens, messages: [{ role: 'user', content: prompt }] }
+
+      const r = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
+
+      // Gestion 429 — retry une fois
+      if (r.status === 429) {
+        await new Promise(res => setTimeout(res, 3000))
+        const r2 = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) })
+        if (!r2.ok) throw new Error(`HTTP ${r2.status}`)
+        const d2 = await r2.json()
+        return cfg.provider === 'anthropic'
+          ? d2.content?.[0]?.text || ''
+          : d2.choices?.[0]?.message?.content || ''
+      }
+
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error?.message || `HTTP ${r.status}`) }
+
+      const data = await r.json()
+      return cfg.provider === 'anthropic'
+        ? data.content?.[0]?.text || ''
+        : data.choices?.[0]?.message?.content || ''
+
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erreur inconnue'
+      setError(msg)
+      return ''
     } finally {
       setLoading(false)
     }
-  }, [options])
+  }, [])
 
-  return { generate, loading, error, result, clear: () => { setResult(null); setError(null) } }
+  return { generate, loading, error }
 }

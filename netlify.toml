@@ -30,14 +30,11 @@
   [headers.values]
     Cache-Control = "public, s-maxage=600, stale-while-revalidate=300"
 
-# Redirects
+# Redirect racine vers dashboard
 [[redirects]]
   from   = "/"
   to     = "/dashboard"
   status = 302
 
-# SPA fallback pour les routes Next.js
-[[redirects]]
-  from   = "/*"
-  to     = "/index.html"
-  status = 200
+# ⚠️ NE PAS ajouter de redirect /* → /index.html pour Next.js
+# Le plugin @netlify/plugin-nextjs gère le routing SSR automatiquement
