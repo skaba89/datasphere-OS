@@ -1,0 +1,85 @@
+# render.yaml — DataSphere OS sur Render.com
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  # ── Application Web principale ──────────────────
+  - type: web
+    name: datasphere-os
+    runtime: node
+    region: frankfurt   # EU — conformité RGPD
+    plan: starter       # 7$/mois (free tier disponible avec limitations)
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+
+    # Variables d'environnement — à renseigner dans le dashboard Render
+    # ou via le fichier .env sur le dashboard
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: 20.14.0
+
+      # Supabase — obligatoires
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false   # à renseigner manuellement dans Render
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+
+      # Stripe — obligatoires pour le paiement
+      - key: NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+
+      # Price IDs Stripe
+      - key: NEXT_PUBLIC_STRIPE_PRICE_PRO_MONTHLY
+        sync: false
+      - key: NEXT_PUBLIC_STRIPE_PRICE_PRO_YEARLY
+        sync: false
+      - key: NEXT_PUBLIC_STRIPE_PRICE_AGENCY_MONTHLY
+        sync: false
+      - key: NEXT_PUBLIC_STRIPE_PRICE_EARLYBIRD
+        sync: false
+
+      # Payment Links Stripe (alternatif aux Price IDs)
+      - key: NEXT_PUBLIC_STRIPE_LINK_PRO_MONTHLY
+        sync: false
+      - key: NEXT_PUBLIC_STRIPE_LINK_AGENCY
+        sync: false
+      - key: NEXT_PUBLIC_STRIPE_LINK_EARLYBIRD
+        sync: false
+
+      # IA — côté serveur uniquement
+      - key: GROQ_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+
+      # APIs offres
+      - key: ADZUNA_APP_ID
+        sync: false
+      - key: ADZUNA_APP_KEY
+        sync: false
+      - key: JOOBLE_API_KEY
+        sync: false
+
+      # App
+      - key: NEXT_PUBLIC_APP_URL
+        sync: false   # ex: https://datasphere-os.onrender.com
+
+    # Autoscaling (plan payant uniquement)
+    # scaling:
+    #   minInstances: 1
+    #   maxInstances: 3
+    #   targetMemoryPercent: 80
+
+    # Domaine custom (configurer dans le dashboard Render)
+    # domains:
+    #   - datasphere-os.fr

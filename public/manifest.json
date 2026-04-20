@@ -1,0 +1,60 @@
+{
+  "name": "DataSphere OS",
+  "short_name": "DataSphere",
+  "description": "Votre OS Freelance tout-en-un — Missions, Facturation, CRM, Agent IA",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#07080F",
+  "theme_color": "#5B7FFF",
+  "orientation": "portrait-primary",
+  "lang": "fr",
+  "categories": ["productivity", "finance", "business"],
+  "icons": [
+    {
+      "src": "/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "maskable any"
+    },
+    {
+      "src": "/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "maskable any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Dashboard",
+      "short_name": "Home",
+      "url": "/dashboard",
+      "description": "Vue d'ensemble de votre activité"
+    },
+    {
+      "name": "Nouvelle mission",
+      "short_name": "Mission",
+      "url": "/missions?new=1",
+      "description": "Créer une mission"
+    },
+    {
+      "name": "Nouvelle facture",
+      "short_name": "Facture",
+      "url": "/facturation?new=1",
+      "description": "Créer une facture"
+    },
+    {
+      "name": "Offres live",
+      "short_name": "Offres",
+      "url": "/offres",
+      "description": "Voir les offres de mission"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/screenshot-dashboard.png",
+      "sizes": "1280x800",
+      "type": "image/png",
+      "label": "Dashboard DataSphere OS"
+    }
+  ]
+}

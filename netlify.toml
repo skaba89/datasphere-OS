@@ -1,0 +1,43 @@
+[build]
+  command   = "npm run build"
+  publish   = ".next"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS    = "--legacy-peer-deps"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
+
+# Headers sécurité sur toutes les routes
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options         = "DENY"
+    X-Content-Type-Options  = "nosniff"
+    Referrer-Policy         = "strict-origin-when-cross-origin"
+    Permissions-Policy      = "camera=(), microphone=(), geolocation=()"
+
+# Cache long sur les assets statiques Next.js
+[[headers]]
+  for = "/_next/static/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Cache court sur l'API offres
+[[headers]]
+  for = "/api/offers"
+  [headers.values]
+    Cache-Control = "public, s-maxage=600, stale-while-revalidate=300"
+
+# Redirects
+[[redirects]]
+  from   = "/"
+  to     = "/dashboard"
+  status = 302
+
+# SPA fallback pour les routes Next.js
+[[redirects]]
+  from   = "/*"
+  to     = "/index.html"
+  status = 200
