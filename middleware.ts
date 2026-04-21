@@ -1,12 +1,10 @@
 import { type NextRequest, NextResponse } from 'next/server'
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
 
+// Routes toujours accessibles sans authentification
 const PUBLIC_ROUTES = [
   '/auth',
   '/pricing',
-  '/api/stripe/webhook',
-  '/api/offers',
-  '/api/health',
+  '/api/',
   '/_next',
   '/favicon',
   '/manifest.json',
@@ -20,20 +18,33 @@ function isPublic(pathname: string): boolean {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  // Routes publiques → toujours laisser passer
   if (isPublic(pathname)) return NextResponse.next()
 
-  let response = NextResponse.next({ request })
+  // Si Supabase n'est pas configuré (env vars absentes ou placeholder)
+  // → on laisse passer sans vérification d'auth
+  // L'app fonctionne en mode "local-only" avec localStorage
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+  const isSupabaseConfigured =
+    supabaseUrl.includes('.supabase.co') &&
+    !supabaseUrl.includes('placeholder')
 
+  if (!isSupabaseConfigured) {
+    return NextResponse.next()
+  }
+
+  // Supabase configuré → vérification auth
   try {
+    const { createServerClient } = await import('@supabase/ssr')
+    let response = NextResponse.next({ request })
+
     const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      supabaseUrl,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
       {
         cookies: {
-          getAll() {
-            return request.cookies.getAll()
-          },
-          setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
+          getAll() { return request.cookies.getAll() },
+          setAll(cookiesToSet) {
             cookiesToSet.forEach(({ name, value }) =>
               request.cookies.set(name, value)
             )
@@ -60,7 +71,8 @@ export async function middleware(request: NextRequest) {
 
     return response
   } catch {
-    return response
+    // Erreur Supabase → laisser passer (mode dégradé)
+    return NextResponse.next()
   }
 }
 
