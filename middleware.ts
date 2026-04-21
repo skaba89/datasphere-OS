@@ -1,6 +1,5 @@
 import { type NextRequest, NextResponse } from 'next/server'
 
-// Routes toujours accessibles sans authentification
 const PUBLIC_ROUTES = [
   '/auth',
   '/pricing',
@@ -18,12 +17,9 @@ function isPublic(pathname: string): boolean {
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  // Routes publiques → toujours laisser passer
   if (isPublic(pathname)) return NextResponse.next()
 
-  // Si Supabase n'est pas configuré (env vars absentes ou placeholder)
-  // → on laisse passer sans vérification d'auth
-  // L'app fonctionne en mode "local-only" avec localStorage
+  // Si Supabase n'est pas configuré → mode local-only, pas de vérification auth
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
   const isSupabaseConfigured =
     supabaseUrl.includes('.supabase.co') &&
@@ -33,7 +29,6 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // Supabase configuré → vérification auth
   try {
     const { createServerClient } = await import('@supabase/ssr')
     let response = NextResponse.next({ request })
@@ -44,14 +39,10 @@ export async function middleware(request: NextRequest) {
       {
         cookies: {
           getAll() { return request.cookies.getAll() },
-          setAll(cookiesToSet) {
-            cookiesToSet.forEach(({ name, value }) =>
-              request.cookies.set(name, value)
-            )
+          setAll(cookiesToSet: { name: string; value: string; options?: import('@supabase/ssr').CookieOptions }[]) {
+            cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
             response = NextResponse.next({ request })
-            cookiesToSet.forEach(({ name, value, options }) =>
-              response.cookies.set(name, value, options)
-            )
+            cookiesToSet.forEach(({ name, value, options }) => response.cookies.set(name, value, options))
           },
         },
       }
@@ -71,7 +62,6 @@ export async function middleware(request: NextRequest) {
 
     return response
   } catch {
-    // Erreur Supabase → laisser passer (mode dégradé)
     return NextResponse.next()
   }
 }
