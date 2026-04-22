@@ -1,85 +1,115 @@
+// app/api/ai-proxy/route.ts
+// Proxy IA côté serveur — utilise les clés serveur si présentes, sinon 503
 import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>()
 
-function checkRateLimit(userId: string): boolean {
-  const now   = Date.now()
-  const limit = rateLimitMap.get(userId)
-  if (!limit || now > limit.resetAt) {
-    rateLimitMap.set(userId, { count: 1, resetAt: now + 60_000 })
-    return true
-  }
-  if (limit.count >= 20) return false
-  limit.count++
-  return true
+function checkRate(ip: string): boolean {
+  const now = Date.now()
+  const l = rateLimitMap.get(ip)
+  if (!l || now > l.resetAt) { rateLimitMap.set(ip, { count: 1, resetAt: now + 60_000 }); return true }
+  if (l.count >= 30) return false
+  l.count++; return true
 }
 
 export async function POST(req: NextRequest) {
-  try {
-    const authHeader = req.headers.get('authorization')
-    const token      = authHeader?.replace('Bearer ', '') || ''
+  const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
 
-    if (!token) {
-      return NextResponse.json({ error: 'Non authentifié' }, { status: 401 })
-    }
-
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
-      process.env.SUPABASE_SERVICE_ROLE_KEY || ''
-    )
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token)
-    if (authError || !user) {
-      return NextResponse.json({ error: 'Token invalide' }, { status: 401 })
-    }
-
-    if (!checkRateLimit(user.id)) {
-      return NextResponse.json({ error: 'Trop de requêtes. Attendez 1 minute.' }, { status: 429 })
-    }
-
-    const body = await req.json()
-    const { prompt, maxTokens = 1000, provider = 'groq', model } = body
-
-    if (!prompt) return NextResponse.json({ error: 'Prompt requis' }, { status: 400 })
-
-    let result = ''
-
-    if (provider === 'groq') {
-      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.GROQ_API_KEY}` },
-        body: JSON.stringify({ model: model || 'llama-3.3-70b-versatile', max_tokens: maxTokens, messages: [{ role: 'user', content: String(prompt) }] }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error?.message || 'Erreur Groq')
-      result = data.choices?.[0]?.message?.content || ''
-
-    } else if (provider === 'anthropic') {
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': process.env.ANTHROPIC_API_KEY || '', 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: model || 'claude-sonnet-4-20250514', max_tokens: maxTokens, messages: [{ role: 'user', content: String(prompt) }] }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error?.message || 'Erreur Anthropic')
-      result = data.content?.[0]?.text || ''
-
-    } else if (provider === 'openrouter') {
-      const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`, 'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || '', 'X-Title': 'DataSphere OS' },
-        body: JSON.stringify({ model: model || 'meta-llama/llama-3.3-70b-instruct:free', max_tokens: maxTokens, messages: [{ role: 'user', content: String(prompt) }] }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error?.message || 'Erreur OpenRouter')
-      result = data.choices?.[0]?.message?.content || ''
-    } else {
-      return NextResponse.json({ error: 'Provider non supporté' }, { status: 400 })
-    }
-
-    return NextResponse.json({ result, provider })
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Erreur serveur'
-    return NextResponse.json({ error: message }, { status: 500 })
+  if (!checkRate(ip)) {
+    return NextResponse.json({ error: 'Trop de requêtes — attendez 1 minute' }, { status: 429 })
   }
+
+  let body: { prompt?: string; maxTokens?: number; provider?: string; model?: string }
+  try { body = await req.json() } catch { return NextResponse.json({ error: 'Body JSON invalide' }, { status: 400 }) }
+
+  const { prompt, maxTokens = 600, provider = 'groq', model } = body
+  if (!prompt) return NextResponse.json({ error: 'prompt requis' }, { status: 400 })
+
+  // ── Groq (clé serveur) ───────────────────────────────────────────
+  if (provider === 'groq' || (!provider && process.env.GROQ_API_KEY)) {
+    const key = process.env.GROQ_API_KEY
+    if (key) {
+      try {
+        const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          body: JSON.stringify({
+            model: model || 'llama-3.3-70b-versatile',
+            max_tokens: maxTokens,
+            temperature: 0.7,
+            messages: [{ role: 'user', content: String(prompt) }],
+          }),
+          signal: AbortSignal.timeout(18000),
+        })
+        const data = await r.json()
+        if (!r.ok) throw new Error(data.error?.message || `Groq ${r.status}`)
+        const result = data.choices?.[0]?.message?.content || ''
+        return NextResponse.json({ result, provider: 'groq' })
+      } catch (e) {
+        // Groq a échoué → essayer OpenRouter
+        console.error('[ai-proxy] Groq error:', e)
+      }
+    }
+  }
+
+  // ── OpenRouter (clé serveur) ─────────────────────────────────────
+  if (process.env.OPENROUTER_API_KEY) {
+    const key = process.env.OPENROUTER_API_KEY
+    try {
+      const r = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${key}`,
+          'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || 'https://datasphere-os.netlify.app',
+          'X-Title': 'DataSphere OS',
+        },
+        body: JSON.stringify({
+          model: model || 'meta-llama/llama-3.3-70b-instruct:free',
+          max_tokens: maxTokens,
+          messages: [{ role: 'user', content: String(prompt) }],
+        }),
+        signal: AbortSignal.timeout(18000),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error?.message || `OpenRouter ${r.status}`)
+      const result = data.choices?.[0]?.message?.content || ''
+      return NextResponse.json({ result, provider: 'openrouter' })
+    } catch (e) {
+      console.error('[ai-proxy] OpenRouter error:', e)
+    }
+  }
+
+  // ── Anthropic (clé serveur) ──────────────────────────────────────
+  if (process.env.ANTHROPIC_API_KEY) {
+    const key = process.env.ANTHROPIC_API_KEY
+    try {
+      const r = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: model || 'claude-haiku-4-5-20251001',
+          max_tokens: maxTokens,
+          messages: [{ role: 'user', content: String(prompt) }],
+        }),
+        signal: AbortSignal.timeout(18000),
+      })
+      const data = await r.json()
+      if (!r.ok) throw new Error(data.error?.message || `Anthropic ${r.status}`)
+      const result = data.content?.[0]?.text || ''
+      return NextResponse.json({ result, provider: 'anthropic' })
+    } catch (e) {
+      console.error('[ai-proxy] Anthropic error:', e)
+    }
+  }
+
+  // Aucune clé serveur disponible → le client utilisera sa propre clé
+  return NextResponse.json(
+    { error: 'Aucune clé IA côté serveur — utilisez votre clé dans les Paramètres' },
+    { status: 503 }
+  )
 }
