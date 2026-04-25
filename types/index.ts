@@ -95,6 +95,7 @@ export interface LiveOffer {
   tech?: string[]
   _live?: boolean
   _mock?: boolean
+  contactHint?: string
 }
 
 export interface Experience {
